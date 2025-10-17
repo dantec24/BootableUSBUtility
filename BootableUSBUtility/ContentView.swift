@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @StateObject private var usbManager = USBManager()
     @StateObject private var isoManager = ISOManager()
+    @StateObject private var privilegeManager = PrivilegeManager()
     @State private var selectedISOPath: String = ""
     @State private var selectedUSBDevice: USBManager.USBDevice?
     @State private var isProcessing = false
@@ -32,6 +33,17 @@ struct ContentView: View {
                 Text("Create bootable USB drives from ISO files and vice versa")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+                
+                // Privilege Status Indicator
+                HStack {
+                    Image(systemName: privilegeManager.hasAdminPrivileges ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
+                        .foregroundColor(privilegeManager.hasAdminPrivileges ? .green : .orange)
+                    
+                    Text(privilegeManager.hasAdminPrivileges ? "Admin privileges available" : "Admin privileges required")
+                        .font(.caption)
+                        .foregroundColor(privilegeManager.hasAdminPrivileges ? .green : .orange)
+                }
+                .padding(.top, 4)
             }
             .padding(.top, 20)
             
@@ -157,16 +169,27 @@ struct ContentView: View {
                 .disabled(isProcessing)
                 
                 Button(action: {
+                    if !privilegeManager.hasAdminPrivileges {
+                        privilegeManager.requestAdminPrivileges()
+                        return
+                    }
+                    
                     if operationMode == .isoToUSB {
                         startISOBurn()
                     } else {
                         startISOCreation()
                     }
                 }) {
-                    Text(operationMode == .isoToUSB ? "Create Bootable USB" : "Create ISO")
+                    HStack {
+                        if !privilegeManager.hasAdminPrivileges {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                        }
+                        Text(operationMode == .isoToUSB ? "Create Bootable USB" : "Create ISO")
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canStartOperation)
+                .foregroundColor(!privilegeManager.hasAdminPrivileges ? .orange : .primary)
             }
             .padding(.horizontal)
             
@@ -190,6 +213,19 @@ struct ContentView: View {
         .onAppear {
             usbManager.refreshDevices()
         }
+        .alert("Administrator Privileges Required", isPresented: $privilegeManager.showPrivilegePrompt) {
+            Button("Restart with Admin") {
+                privilegeManager.requestAdminPrivileges()
+            }
+            Button("Continue Without Admin") {
+                privilegeManager.dismissPrivilegePrompt()
+            }
+            Button("Cancel") {
+                NSApplication.shared.terminate(nil)
+            }
+        } message: {
+            Text("This app needs administrator privileges to write to USB devices. Would you like to restart the app with admin privileges?")
+        }
     }
     
     private var canStartOperation: Bool {
@@ -209,6 +245,7 @@ struct ContentView: View {
         
         Task {
             do {
+                print("🎯 ContentView: Starting burn task")
                 try await isoManager.burnISOToUSB(
                     isoPath: selectedISOPath,
                     usbDevice: device,
@@ -220,12 +257,18 @@ struct ContentView: View {
                     }
                 )
                 
+                print("🎯 ContentView: Burn completed successfully")
                 DispatchQueue.main.async {
                     self.isProcessing = false
                     self.statusMessage = "ISO successfully burned to USB!"
                     self.progress = 1.0
+                    // Refresh device list after successful operation
+                    self.usbManager.refreshDevices()
                 }
             } catch {
+                print("🎯 ContentView: Error occurred: \(error)")
+                print("🎯 ContentView: Error type: \(type(of: error))")
+                print("🎯 ContentView: Error description: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     self.isProcessing = false
                     self.statusMessage = "Error: \(error.localizedDescription)"
@@ -258,6 +301,8 @@ struct ContentView: View {
                     self.isProcessing = false
                     self.statusMessage = "ISO successfully created from USB!"
                     self.progress = 1.0
+                    // Refresh device list after successful operation
+                    self.usbManager.refreshDevices()
                 }
             } catch {
                 DispatchQueue.main.async {

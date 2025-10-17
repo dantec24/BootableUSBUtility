@@ -96,14 +96,35 @@ class USBManager: ObservableObject {
     }
     
     func unmountDevice(_ device: USBDevice) -> Bool {
+        print("Attempting to unmount device: \(device.devicePath)")
+        
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/diskutil")
         process.arguments = ["unmount", device.devicePath]
         
+        let pipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = errorPipe
+        
         do {
             try process.run()
             process.waitUntilExit()
-            return process.terminationStatus == 0
+            
+            let output = pipe.fileHandleForReading.readDataToEndOfFile()
+            let errorOutput = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            
+            if let outputString = String(data: output, encoding: .utf8) {
+                print("Unmount output: \(outputString)")
+            }
+            
+            if let errorString = String(data: errorOutput, encoding: .utf8) {
+                print("Unmount error: \(errorString)")
+            }
+            
+            let success = process.terminationStatus == 0
+            print("Unmount result: \(success ? "Success" : "Failed") (exit code: \(process.terminationStatus))")
+            return success
         } catch {
             print("Error unmounting device: \(error)")
             return false
